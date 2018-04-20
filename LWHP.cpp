@@ -1,3 +1,5 @@
+//Removing Nt, using td when it's in active period
+//Silent period seems to be 40%-60% during one call session
 #include <iostream>
 #include <ctime>
 #include <cstdio>
@@ -9,9 +11,9 @@
 
 /* Parameter definition */
 #define ALPHA 0.8	//The probability that another on-off period arrives
-#define lambda 0.05	//Ta is an exponential distribution with mean E[Ta] = 1/lambda
+#define lambda 0.5	//Ta is an exponential distribution with mean E[Ta] = 1/lambda
 #define mu 0.5		//Ts is an exponential distribution with mean E[Ts] = 1/mu
-#define sita 0.5	//Td is an exponential distribution with mean E[Td] = 1/sita
+//#define sita 0.5	//Td is an exponential distribution with mean E[Td] = 1/sita
 #define Tw_Shape 10	//Tw is a gamma distribution with shape = 10 and rate = 1
 #define Tw_Rate 1
 #define Tl_Shape 1	//Tl is a gamma distribution with shape = 1 and rate = 1
@@ -40,16 +42,25 @@ Event* Generate_arrival_event(int _type, double _time){
 int main()
 {
 	int simuTimes;	//The number of simulation times
+	double mean_Td;	//Td is an exponential distribution with mean E[Td] = 1/sita
 	int randomSeed = (int) time(NULL);
-	int Nt;			//The rounds of on-off periods that serve handover procedure immediately
 	int Crh;		//The number of handover with NDTA during whole simulation times; NDTA means the first Nt rounds serve with standard procedure and the rest of rounds in a session serve with DTA.
 	int Crh_0;		//The number of handover with standard procedure(Td = 0) during whole simulation times
 	int rounds;		//The counting number of on-off periods
+	bool isActive;	//The boolean value to see whether it's in active period or not.
 	bool on;		
 
+	/* Input of simulation times and E[td] */
+	printf("Please enter the following parameter:\n");
+	printf("1. Simulation times: ");
+	scanf("%d",&simuTimes);
+	printf("\n2. E[td] (secs): ");
+	scanf("%lf",&mean_Td);
+	/* Input finished */
+
+	double sita = 1/mean_Td;
 	double mean_Ta = 1.0/lambda;
 	double mean_Ts = 1.0/mu;
-	double mean_Td = 1.0/sita;
 	double mean_Tw = (double)Tw_Shape/Tw_Rate;
 	double mean_Tl = (double)Tl_Shape/Tl_Rate;
 	double var_Tw = (double)Tw_Shape/(Tw_Rate*Tw_Rate);
@@ -71,19 +82,14 @@ int main()
 	double Td_Time = 0;		//The time when td expired
 
 	/* Mathematical definitions */
-	double E_Nh_Nt_0;		//E[Nh(Nt, 0)]
-	double E_Nrh_Nt_td;		//E[Nrh(Nt, Td)]
-	double E_Nh_Nt_td;		//E[Nh(Nt, Td)]
-	double Laplace_fl;		//The Laplace tranform function of fl, which is the p.d.f of Tl
+	double E_Nh_0;			//E[Nh(0)]
+	double E_Nrh_td;		//E[Nrh(Td)]
+	double E_Nh_td;			//E[Nh(Td)]
+	double Rh_td;
+	double Laplace_fsL;		//The Laplace tranform function of fsL, which is the p.d.f of TsL
 	double eta_Tl;			//mean_Tl = 1/eta_Tl
 	double eta_Tw;			//mean_Tw = 1/eta_Tw
 	double base;
-
-	printf("Please enter the following parameter:\n");
-	printf("1. Simulation times: ");
-	scanf("%d",&simuTimes);
-	printf("\n2. The number of standard rounds - Nt: ");
-	scanf("%d",&Nt);		
 
 	Crh=0;
 	Crh_0=0;
@@ -92,15 +98,17 @@ int main()
 	eta_Tw = (double)Tw_Rate/Tw_Shape;
 	eta_Tl = (double)Tl_Rate/Tl_Shape;
 	base = (Tl_Shape*eta_Tl)/(Tl_Shape*eta_Tl+sita);
-	Laplace_fl = pow(base, Tl_Shape);
-	E_Nh_Nt_0 = 2*(lambda+mu)*eta_Tl*eta_Tw/(lambda*mu*(eta_Tl+eta_Tw)*(1-ALPHA));
-	E_Nrh_Nt_td = Laplace_fl*(lambda+mu)*eta_Tl*eta_Tw*pow(ALPHA, Nt)/(lambda*mu*(eta_Tl+eta_Tw)*(1-ALPHA));
-	E_Nh_Nt_td = E_Nh_Nt_0 - E_Nrh_Nt_td;
+	Laplace_fsL = pow(base, Tl_Shape);
+	E_Nh_0 = 2*(lambda+mu)*eta_Tl*eta_Tw/(lambda*mu*(eta_Tl+eta_Tw)*(1-ALPHA));
+	E_Nrh_td = Laplace_fsL*eta_Tl*eta_Tw/(mu*(eta_Tl+eta_Tw)*(1-ALPHA));
+	E_Nh_td = E_Nh_0 - E_Nrh_td;
+	Rh_td = Laplace_fsL*lambda/(2*lambda+mu);
 
 	/* Simulation starts */
 	for(int i=0; i<simuTimes; i++)
 	{
 		printf("\n** %d simulation **\n",i+1);
+
 		/* Reset starts */
 		rounds = 0;
 		User_Time = 0;
@@ -132,6 +140,7 @@ int main()
 		User_Time += Ts++;
 		initE = Generate_arrival_event(SP_EXPIRED, User_Time);
 		List << *initE;
+		isActive = false;
 
 		on = true;
 		/* Initialization ends */
@@ -146,11 +155,12 @@ int main()
 					//printf("== SP_EXPIRED ==\n");
 					alpha = p++;		//next alpha value
 					if(alpha <= ALPHA)	//There is another on-off period following up
-					{
-						rounds++;		
+					{	
+						rounds++;
 						User_Time += Ta++;
 						e = Generate_arrival_event(AP_EXPIRED, User_Time);
 						List << *e;
+						isActive = true;
 					}
 					else				//There is no other on-off period following up. Call session ends.
 					{
@@ -163,6 +173,7 @@ int main()
 					User_Time += Ts++;
 					e = Generate_arrival_event(SP_EXPIRED, User_Time);
 					List << *e;
+					isActive = false;
 					break;
 
 				case LW_ARRIVAL:
@@ -182,7 +193,7 @@ int main()
 					if(rounds > 0)		//Session is on
 					{
 						Crh_0++;
-						if(rounds > Nt)	//Rounds after Nt rounds uses DTA
+						if(!isActive)	//If it's in silent period, we can use DTA to reduce handover
 						{
 							//Td timer starts
 							Td_Time = Mob_Time + Td++;
@@ -200,7 +211,7 @@ int main()
 								List << *e;
 							}
 						}
-						else			//Rounds before Nt rounds don't use DTA, and so UE handovers from VoWiFi to VoLTE immediately
+						else			//If it's in active period, we don't use DTA. And so UE handovers from VoWiFi to VoLTE immediately
 						{
 							Crh++;
 							Mob_Time += Tl++;
@@ -237,17 +248,17 @@ int main()
 	/* Simulation ends */
 
 
-	printf("\nNt = %d, E[Td] = %f", Nt, mean_Td);
+	printf("\nE[Td] = %f", mean_Td);
 	printf("\nMathematical Analysis\n");
 	//printf("E[Nh(Nt, 0)] = %f\n", E_Nh_Nt_0);
 	//printf("E[Nrh(Nt, Td)] = %f\n", E_Nrh_Nt_td);
 	//printf("E[Nh(Nt, Td)] = %f\n", E_Nh_Nt_td);
-	printf("Rh(Nt, Td) = %f\n", Laplace_fl*pow(ALPHA, Nt)/2);
+	printf("Rh(Td) = %f\n", Rh_td);
 
 	printf("\nSimulation Analysis\n");
 	//printf("E[Nh(Nt, 0)] = %f\n", (double)Crh_0/simuTimes);
 	//printf("E[Nh(Nt, Td)] = %f\n", (double)Crh/simuTimes);	//E[Nh(Nt, Td)]=Crh/simuTimes
-	printf("Rh(Nt, Td) = %f\n", ((double)(Crh_0-Crh)/Crh_0));
+	printf("Rh(Td) = %f\n", ((double)(Crh_0-Crh)/Crh_0));
 
 	
 
