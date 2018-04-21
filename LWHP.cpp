@@ -16,8 +16,10 @@
 //#define sita 0.5	//Td is an exponential distribution with mean E[Td] = 1/sita
 #define Tw_Shape 10	//Tw is a gamma distribution with shape = 10 and rate = 1
 #define Tw_Rate 1
-#define Tl_Shape 1	//Tl is a gamma distribution with shape = 1 and rate = 1
-#define Tl_Rate 1
+#define Tl_Shape 2	//Tl is a gamma distribution with shape = 1 and rate = 1
+#define Tl_Rate 2
+#define Da 0.02		//In active periods, every Da milli-seconds comes a packet.
+#define Ds 0.16		//In silent periods, every Ds milli-seconds comes a packet.
 
 /* Event definition */
 #define SP_EXPIRED 0	//Silent period expired
@@ -46,6 +48,10 @@ int main()
 	int randomSeed = (int) time(NULL);
 	int Crh;		//The number of handover with NDTA during whole simulation times; NDTA means the first Nt rounds serve with standard procedure and the rest of rounds in a session serve with DTA.
 	int Crh_0;		//The number of handover with standard procedure(Td = 0) during whole simulation times
+	int Np;			//The number of packets during whole simulation times
+	int Npd;		//The number of packet drops during whole simulation times
+	int Npda;		//The number of packet drops during active periods
+	int Npds;		//The number of packet drops during silent periods
 	int rounds;		//The counting number of on-off periods
 	bool isActive;	//The boolean value to see whether it's in active period or not.
 	bool on;		
@@ -77,6 +83,7 @@ int main()
 
 	Event* initE;
 	Event* e;
+	double pre_Time = 0;	//The time of previous status;
 	double User_Time = 0;	//The timeline of user's active-silent (on-off) actions
 	double Mob_Time = 0;	//The timeline of mobility 
 	double Td_Time = 0;		//The time when td expired
@@ -91,8 +98,11 @@ int main()
 	double eta_Tw;			//mean_Tw = 1/eta_Tw
 	double base;
 
-	Crh=0;
-	Crh_0=0;
+	Crh = 0;
+	Crh_0 = 0;
+
+	Np = 0;
+	Npd = 0;
 
 	/* Mathematical Analysis */
 	eta_Tw = (double)Tw_Rate/Tw_Shape;
@@ -102,7 +112,7 @@ int main()
 	E_Nh_0 = 2*(lambda+mu)*eta_Tl*eta_Tw/(lambda*mu*(eta_Tl+eta_Tw)*(1-ALPHA));
 	E_Nrh_td = Laplace_fsL*eta_Tl*eta_Tw/(mu*(eta_Tl+eta_Tw)*(1-ALPHA));
 	E_Nh_td = E_Nh_0 - E_Nrh_td;
-	Rh_td = Laplace_fsL*lambda/(2*lambda+mu);
+	Rh_td = Laplace_fsL*lambda/(2*(lambda+mu));
 
 	/* Simulation starts */
 	for(int i=0; i<simuTimes; i++)
@@ -157,7 +167,9 @@ int main()
 					if(alpha <= ALPHA)	//There is another on-off period following up
 					{	
 						rounds++;
+						pre_Time = User_Time;
 						User_Time += Ta++;
+						Np += (User_Time - pre_Time)/Da;
 						e = Generate_arrival_event(AP_EXPIRED, User_Time);
 						List << *e;
 						isActive = true;
@@ -170,7 +182,9 @@ int main()
 
 				case AP_EXPIRED:
 					//printf("== AP_EXPIRED ==\n");
+					pre_Time = User_Time;
 					User_Time += Ts++;
+					Np += (User_Time - pre_Time)/Ds;
 					e = Generate_arrival_event(SP_EXPIRED, User_Time);
 					List << *e;
 					isActive = false;

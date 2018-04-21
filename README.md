@@ -8,5 +8,5 @@ Simulation engine: Lab117
 			return(head->getNext() != NULL); //modify from "== NULL" to "!=NULL", by MongTingWu
 		}
 Execute: $./LWHP.out
-Input: Simulation times and Nt
-Output: Rh[Nt,Td] (Both mathematics and simulation analysis)
+Input: Simulation times and E[td]
+Output: Rh[Td] (Both mathematics and simulation analysis)
