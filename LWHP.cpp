@@ -14,10 +14,10 @@
 #define lambda 0.5	//Ta is an exponential distribution with mean E[Ta] = 1/lambda
 #define mu 0.5		//Ts is an exponential distribution with mean E[Ts] = 1/mu
 //#define sita 0.5	//Td is an exponential distribution with mean E[Td] = 1/sita
-#define Tw_Shape 10	//Tw is a gamma distribution with shape = 10 and rate = 1
-#define Tw_Rate 1
-#define Tl_Shape 2	//Tl is a gamma distribution with shape = 1 and rate = 1
-#define Tl_Rate 2
+#define Tw_Shape 1.0	//Tw is a gamma distribution with shape = 10 and rate = 1
+#define Tw_Rate 1.0
+#define Tl_Shape 1.0	//Tl is a gamma distribution with shape = 1 and rate = 1
+#define Tl_Rate 1.0
 #define Da 0.02		//In active periods, every Da milli-seconds comes a packet.
 #define Ds 0.16		//In silent periods, every Ds milli-seconds comes a packet.
 
@@ -46,14 +46,19 @@ int main()
 	int simuTimes;	//The number of simulation times
 	double mean_Td;	//Td is an exponential distribution with mean E[Td] = 1/sita
 	int randomSeed = (int) time(NULL);
-	int Crh;		//The number of handover with NDTA during whole simulation times; NDTA means the first Nt rounds serve with standard procedure and the rest of rounds in a session serve with DTA.
+	int Crh;		//The number of handover with DTA during whole simulation times;
 	int Crh_0;		//The number of handover with standard procedure(Td = 0) during whole simulation times
+	int sum_Crh;
+	int sum_Crh_0;
 	int Np;			//The number of packets during whole simulation times
 	int Npd;		//The number of packet drops during whole simulation times
-	int Npda;		//The number of packet drops during active periods
-	int Npds;		//The number of packet drops during silent periods
-	int rounds;		//The counting number of on-off periods
-	bool isActive;	//The boolean value to see whether it's in active period or not.
+	int Npda;		//The number of packet drops during active periods in one td delay period
+	int Npds;		//The number of packet drops during silent periods in one td delay period
+	int total_Npda;	//The total packet drops during active periods
+	int total_Npds;	//The total packet drops during silent periods
+	bool inActivePeriod;	//The boolean value to see whether it's in active period or not.
+	bool inTdPeriod;		//The boolean value to see whether it's in td period or not.
+	bool isFirstE;			//The boolean value to see whether it's the first event after td timer triggers.
 	bool on;		
 
 	/* Input of simulation times and E[td] */
@@ -83,10 +88,12 @@ int main()
 
 	Event* initE;
 	Event* e;
-	double pre_Time = 0;	//The time of previous status;
+	double preU_Time = 0;	//The time of previous User event happens.
+	double startTd_Time = 0;//The time of Td timer starts.
 	double User_Time = 0;	//The timeline of user's active-silent (on-off) actions
 	double Mob_Time = 0;	//The timeline of mobility 
 	double Td_Time = 0;		//The time when td expired
+	double sum_Rh = 0;
 
 	/* Mathematical definitions */
 	double E_Nh_0;			//E[Nh(0)]
@@ -98,11 +105,15 @@ int main()
 	double eta_Tw;			//mean_Tw = 1/eta_Tw
 	double base;
 
-	Crh = 0;
-	Crh_0 = 0;
+	sum_Crh = 0;
+	sum_Crh_0 = 0;
+
+	sum_Rh = 0;
 
 	Np = 0;
 	Npd = 0;
+	total_Npda = 0;
+	total_Npds = 0;
 
 	/* Mathematical Analysis */
 	eta_Tw = (double)Tw_Rate/Tw_Shape;
@@ -113,17 +124,20 @@ int main()
 	E_Nrh_td = Laplace_fsL*eta_Tl*eta_Tw/(mu*(eta_Tl+eta_Tw)*(1-ALPHA));
 	E_Nh_td = E_Nh_0 - E_Nrh_td;
 	Rh_td = Laplace_fsL*lambda/(2*(lambda+mu));
-
+	
 	/* Simulation starts */
 	for(int i=0; i<simuTimes; i++)
 	{
 		printf("\n** %d simulation **\n",i+1);
 
 		/* Reset starts */
-		rounds = 0;
 		User_Time = 0;
 		Mob_Time = 0;
+		preU_Time = 0;
+		startTd_Time = 0;
 
+		Crh_0 = 0;
+		Crh = 0;
 
 		while(!List)
 		{
@@ -146,11 +160,13 @@ int main()
 		}
 		List << *initE;
 
-		//Generate a SP_EXPIRED to see if there is an on-off period following up.
-		User_Time += Ts++;
-		initE = Generate_arrival_event(SP_EXPIRED, User_Time);
+		//Generate an AP_EXPIRED
+		User_Time += Ta++;
+		initE = Generate_arrival_event(AP_EXPIRED, User_Time);
 		List << *initE;
-		isActive = false;
+		inActivePeriod = true;
+		inTdPeriod = false;
+		isFirstE = false;
 
 		on = true;
 		/* Initialization ends */
@@ -163,16 +179,24 @@ int main()
 			{
 				case SP_EXPIRED:
 					//printf("== SP_EXPIRED ==\n");
+					if(inTdPeriod)
+					{
+						Npds += (User_Time - preU_Time)/Ds;
+						if(isFirstE)
+						{
+							isFirstE = false;
+							Npds -= (startTd_Time - preU_Time)/Ds;
+						}
+					}
 					alpha = p++;		//next alpha value
 					if(alpha <= ALPHA)	//There is another on-off period following up
 					{	
-						rounds++;
-						pre_Time = User_Time;
+						preU_Time = User_Time;
 						User_Time += Ta++;
-						Np += (User_Time - pre_Time)/Da;
+						Np += (User_Time - preU_Time)/Da;
 						e = Generate_arrival_event(AP_EXPIRED, User_Time);
 						List << *e;
-						isActive = true;
+						inActivePeriod = true;
 					}
 					else				//There is no other on-off period following up. Call session ends.
 					{
@@ -182,99 +206,156 @@ int main()
 
 				case AP_EXPIRED:
 					//printf("== AP_EXPIRED ==\n");
-					pre_Time = User_Time;
+					if(inTdPeriod)
+					{
+						Npda += (User_Time - preU_Time)/Da;
+					}
+					preU_Time = User_Time;
 					User_Time += Ts++;
-					Np += (User_Time - pre_Time)/Ds;
+					Np += (User_Time - preU_Time)/Ds;
 					e = Generate_arrival_event(SP_EXPIRED, User_Time);
 					List << *e;
-					isActive = false;
+					inActivePeriod = false;
 					break;
 
 				case LW_ARRIVAL:
 					//printf("== LW_ARRIVAL ==\n");
-					if(rounds > 0)		//Session is on
-					{
-						Crh++;
-						Crh_0++;
-						Mob_Time += Tw++;
-						e = Generate_arrival_event(WT_ARRIVAL, Mob_Time);
-						List << *e;
-					}
+					Crh++;
+					Crh_0++;
+					Mob_Time += Tw++;
+					e = Generate_arrival_event(WT_ARRIVAL, Mob_Time);
+					List << *e;
 					break;
 
 				case WT_ARRIVAL:
 					//printf("== WT_ARRIVAL ==\n");
-					if(rounds > 0)		//Session is on
+					Crh_0++;
+					if(!inActivePeriod)	//If it's in silent period, we can use DTA to reduce handover
 					{
-						Crh_0++;
-						if(!isActive)	//If it's in silent period, we can use DTA to reduce handover
+						//Td timer starts
+						inTdPeriod = true;
+						isFirstE = true;
+						Npda = 0;
+						Npds = 0;
+
+						Td_Time = Mob_Time + Td++;
+						startTd_Time = Mob_Time;
+						Mob_Time += Tl++;
+						if(Td_Time > Mob_Time)	//Tl expired first, UE handovers from one VoWiFi to another VoWiFi
 						{
-							//Td timer starts
-							Td_Time = Mob_Time + Td++;
-							Mob_Time += Tl++;
-							if(Td_Time > Mob_Time)	//Tl expired first, UE handovers from one VoWiFi to another VoWiFi
-							{
-								e = Generate_arrival_event(WW_ARRIVAL, Mob_Time);
-								List << *e;
-							}
-							else		//Td expired first, UE handovers from VoWiFi to VoLTE when Td expires
-							{
-								e = Generate_arrival_event(TD_EXPIRED, Td_Time);
-								List << *e;
-								e = Generate_arrival_event(LW_ARRIVAL, Mob_Time);
-								List << *e;
-							}
+							e = Generate_arrival_event(WW_ARRIVAL, Mob_Time);
+							List << *e;
 						}
-						else			//If it's in active period, we don't use DTA. And so UE handovers from VoWiFi to VoLTE immediately
+						else		//Td expired first, UE handovers from VoWiFi to VoLTE when Td expires
 						{
-							Crh++;
-							Mob_Time += Tl++;
+							e = Generate_arrival_event(TD_EXPIRED, Td_Time);
+							List << *e;
 							e = Generate_arrival_event(LW_ARRIVAL, Mob_Time);
-							List << *e;	
+							List << *e;
 						}
 					}
+					else			//If it's in active period, we don't use DTA. And so UE handovers from VoWiFi to VoLTE immediately
+					{
+						Crh++;
+						Mob_Time += Tl++;
+						e = Generate_arrival_event(LW_ARRIVAL, Mob_Time);
+						List << *e;	
+					}
 					break;
+
 				case TD_EXPIRED:
 					//printf("== TD_EXPIRED ==\n");
-					if(rounds > 0)	//Session is on
+					//If td expired before tl, UE handovers from VoWiFi to VoLTE
+					inTdPeriod = false;
+					if(inActivePeriod)
 					{
-						//If td expired before tl, UE handovers from VoWiFi to VoLTE
-						Crh++;
+						Npda += (Td_Time - preU_Time)/Da;
 					}
+					else
+					{
+						Npds += (Td_Time - preU_Time)/Ds;
+						if(isFirstE)
+						{
+							isFirstE = false;
+							Npds -= (startTd_Time - preU_Time)/Ds;
+						}
+					}
+					Npd += Npda + Npds;
+
+					total_Npda += Npda;
+					total_Npds += Npds;
+
+					Crh++;
 					break;
+
 				case WW_ARRIVAL:
-					if(rounds > 0)	//Session is on
+					//printf("== WW_ARRIVAL ==\n");
+					inTdPeriod = false;
+					if(inActivePeriod)
 					{
-						//printf("== WW_ARRIVAL ==\n");
-						Crh++;
-						Crh_0++;
-						Mob_Time += Tw++;
-						e = Generate_arrival_event(WT_ARRIVAL, Mob_Time);
-						List << *e;
+						Npda += (Mob_Time - preU_Time)/Da;
 					}
+					else
+					{
+						Npds += (Mob_Time - preU_Time)/Ds;
+						if(isFirstE)
+						{
+							isFirstE = false;
+							Npds -= (startTd_Time - preU_Time)/Ds;
+						}
+					}
+					Npd += Npda + Npds;
+
+					total_Npda += Npda;
+					total_Npds += Npds;
+
+					Crh++;
+					Crh_0++;
+					Mob_Time += Tw++;
+					e = Generate_arrival_event(WT_ARRIVAL, Mob_Time);
+					List << *e;
 					break;
+
 				default:
 					break;			
 			}
 		}
 		/* Events handling ends */
+		
+		
+		if(Crh_0!=0)
+		{
+			//printf("Crh_0 = %d, Crh = %d\n", Crh_0, Crh);
+			sum_Crh += Crh;
+			sum_Crh_0 += Crh_0;
+			sum_Rh += ((double)(Crh_0-Crh)/Crh_0);
+		}
+		//printf("sum_Rh = %f\n",sum_Rh );
+		
 	}
 	/* Simulation ends */
 
 
 	printf("\nE[Td] = %f", mean_Td);
 	printf("\nMathematical Analysis\n");
-	//printf("E[Nh(Nt, 0)] = %f\n", E_Nh_Nt_0);
-	//printf("E[Nrh(Nt, Td)] = %f\n", E_Nrh_Nt_td);
-	//printf("E[Nh(Nt, Td)] = %f\n", E_Nh_Nt_td);
+	printf("E[Nh(0)] = %f\n", E_Nh_0);
+	printf("E[Nrh(Td)] = %f\n", E_Nrh_td);
+	printf("E[Nh(Td)] = %f\n", E_Nh_td);
 	printf("Rh(Td) = %f\n", Rh_td);
 
 	printf("\nSimulation Analysis\n");
-	//printf("E[Nh(Nt, 0)] = %f\n", (double)Crh_0/simuTimes);
-	//printf("E[Nh(Nt, Td)] = %f\n", (double)Crh/simuTimes);	//E[Nh(Nt, Td)]=Crh/simuTimes
-	printf("Rh(Td) = %f\n", ((double)(Crh_0-Crh)/Crh_0));
+	printf("E[Nh(0)] = %f\n", (double)sum_Crh_0/simuTimes);
+	printf("E[Nrh(Td)] = %f\n", ((double)(sum_Crh_0-sum_Crh))/simuTimes);
+	printf("E[Nh(Td)] = %f\n", (double)sum_Crh/simuTimes);
+	//printf("1. Rh(Td) = %f\n", ((double)(sum_Crh_0-sum_Crh)/sum_Crh_0));
+	printf("Rh(Td) = %f\n", sum_Rh/simuTimes);
 
-	
+	printf("\nError Rate\n");
+	printf("Rh(Td) = %.6f%%\n", (abs(sum_Rh/simuTimes - Rh_td)/Rh_td)*100);
+
+	//printf("Packet loss = %.3f %%\n", (double)Npd/Np*100);
+	//printf("Packet loss during active period = %.3f %%\n", (double)total_Npda/Np*100);
+	//printf("Packet loss during silent period = %.3f %%\n", (double)total_Npds/Np*100);
 
 	return 0;
 }
