@@ -1,5 +1,6 @@
-//Removing Nt, using td when it's in active period
+//We use DTA when it's VoWiFi disconnected and is in silent period
 //Silent period seems to be 40%-60% during one call session
+//Error rate of Rh(td) up to 4% is because that E[Nrh(td)] is too small
 #include <iostream>
 #include <ctime>
 #include <cstdio>
@@ -14,9 +15,9 @@
 #define lambda 0.5	//Ta is an exponential distribution with mean E[Ta] = 1/lambda
 #define mu 0.5		//Ts is an exponential distribution with mean E[Ts] = 1/mu
 //#define sita 0.5	//Td is an exponential distribution with mean E[Td] = 1/sita
-#define Tw_Shape 1.0	//Tw is a gamma distribution with shape = 10 and rate = 1
+#define Tw_Shape 1.0	//Tw is a gamma distribution with shape = 1 and rate = 1 (exponential distribution)
 #define Tw_Rate 1.0
-#define Tl_Shape 1.0	//Tl is a gamma distribution with shape = 1 and rate = 1
+#define Tl_Shape 1.0	//Tl is a gamma distribution with shape = 1 and rate = 1 (exponential distribution)
 #define Tl_Rate 1.0
 #define Da 0.02		//In active periods, every Da milli-seconds comes a packet.
 #define Ds 0.16		//In silent periods, every Ds milli-seconds comes a packet.
@@ -69,13 +70,13 @@ int main()
 	scanf("%lf",&mean_Td);
 	/* Input finished */
 
-	double sita = 1/mean_Td;
+	double sita = 1.0/mean_Td;
 	double mean_Ta = 1.0/lambda;
 	double mean_Ts = 1.0/mu;
-	double mean_Tw = (double)Tw_Shape/Tw_Rate;
-	double mean_Tl = (double)Tl_Shape/Tl_Rate;
-	double var_Tw = (double)Tw_Shape/(Tw_Rate*Tw_Rate);
-	double var_Tl = (double)Tl_Shape/(Tl_Rate*Tl_Rate);
+	double mean_Tw = ((double)Tw_Shape)/Tw_Rate;
+	double mean_Tl = ((double)Tl_Shape)/Tl_Rate;
+	double var_Tw = ((double)Tw_Shape)/(Tw_Rate*Tw_Rate);
+	double var_Tl = ((double)Tl_Shape)/(Tl_Rate*Tl_Rate);
 
 	double alpha;			//If alpha <= ALPHA, there is another on-off period following up
 	Prob p(randomSeed++);	//The generator of alpha
@@ -139,6 +140,8 @@ int main()
 		Crh_0 = 0;
 		Crh = 0;
 
+		// LW_cnt = 0;
+
 		while(!List)
 		{
 			List >> e;	
@@ -165,6 +168,7 @@ int main()
 		initE = Generate_arrival_event(AP_EXPIRED, User_Time);
 		List << *initE;
 		inActivePeriod = true;
+		
 		inTdPeriod = false;
 		isFirstE = false;
 
@@ -199,7 +203,7 @@ int main()
 						inActivePeriod = true;
 					}
 					else				//There is no other on-off period following up. Call session ends.
-					{
+					{	
 						on = false;
 					}
 					break;
@@ -222,9 +226,10 @@ int main()
 					//printf("== LW_ARRIVAL ==\n");
 					Crh++;
 					Crh_0++;
+
 					Mob_Time += Tw++;
 					e = Generate_arrival_event(WT_ARRIVAL, Mob_Time);
-					List << *e;
+					List << *e;				
 					break;
 
 				case WT_ARRIVAL:
@@ -259,7 +264,7 @@ int main()
 						Crh++;
 						Mob_Time += Tl++;
 						e = Generate_arrival_event(LW_ARRIVAL, Mob_Time);
-						List << *e;	
+						List << *e;
 					}
 					break;
 
@@ -348,10 +353,14 @@ int main()
 	printf("E[Nrh(Td)] = %f\n", ((double)(sum_Crh_0-sum_Crh))/simuTimes);
 	printf("E[Nh(Td)] = %f\n", (double)sum_Crh/simuTimes);
 	//printf("1. Rh(Td) = %f\n", ((double)(sum_Crh_0-sum_Crh)/sum_Crh_0));
-	printf("Rh(Td) = %f\n", sum_Rh/simuTimes);
+	//printf("Rh(Td) = %f\n", sum_Rh/simuTimes);
+	printf("Rh(Td) = %f\n", 1-(double)sum_Crh/sum_Crh_0);
 
 	printf("\nError Rate\n");
-	printf("Rh(Td) = %.6f%%\n", (abs(sum_Rh/simuTimes - Rh_td)/Rh_td)*100);
+	printf("E[Nh(0)] = %.6f%%\n", (((double)sum_Crh_0/simuTimes) - E_Nh_0)/E_Nh_0*100);
+	printf("E[Nrh(Td)] = %.6f%%\n", (((double)(sum_Crh_0-sum_Crh)/simuTimes) - E_Nrh_td)/E_Nrh_td*100);
+	printf("E[Nh(Td)] = %.6f%%\n", (((double)sum_Crh/simuTimes) - E_Nh_td)/E_Nh_td*100);
+	printf("Rh(Td) = %.6f%%\n", (abs(1-(double)sum_Crh/sum_Crh_0 - Rh_td)/Rh_td)*100);
 
 	//printf("Packet loss = %.3f %%\n", (double)Npd/Np*100);
 	//printf("Packet loss during active period = %.3f %%\n", (double)total_Npda/Np*100);
